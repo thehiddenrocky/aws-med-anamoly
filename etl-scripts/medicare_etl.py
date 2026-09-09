@@ -4,7 +4,13 @@ from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.window import Window
 
 # Detect if running locally or in Glue
-IS_LOCAL = "GLUE_INSTALLATION_DIR" not in os.environ and "AWS_GLUE_HOME" not in os.environ
+try:
+    from awsglue.utils import getResolvedOptions
+    from awsglue.context import GlueContext
+    from pyspark.context import SparkContext
+    IS_LOCAL = False
+except ImportError:
+    IS_LOCAL = True
 
 if IS_LOCAL:
     # Auto-detect JAVA_HOME on macOS if not set
@@ -40,8 +46,8 @@ else:
     glueContext = GlueContext(sc)
     spark = glueContext.spark_session
 
-    INPUT_PATH = "s3://medicare-fraud-raw/part_b/2022/"
-    OUTPUT_PATH = "s3://medicare-fraud-processed/part_b/2022/"
+    INPUT_PATH = "s3://medicare-fraud-raw-023413058557/Train_Inpatientdata-1542865627584.csv"
+    OUTPUT_PATH = "s3://medicare-fraud-processed-023413058557/inpatient_processed/"
 
 # --- ETL Logic (runs identical locally or on AWS) ---
 print("\n" + "="*50)
@@ -79,5 +85,5 @@ if IS_LOCAL:
     print(f"Successfully read back Parquet output. Count: {verify_df.count()} rows.")
     print("ETL job verification: SUCCESS!")
 else:
-    df.write.mode("overwrite").partitionBy("provider_type").parquet(OUTPUT_PATH)
+    df.write.mode("overwrite").parquet(OUTPUT_PATH)
 
