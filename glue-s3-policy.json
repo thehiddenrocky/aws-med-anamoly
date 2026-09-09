@@ -10,10 +10,12 @@
        "s3:ListBucket"
      ],
      "Resource": [
-       "arn:aws:s3:::medicare-fraud-raw",
-       "arn:aws:s3:::medicare-fraud-raw/*",
-       "arn:aws:s3:::medicare-fraud-processed",
-       "arn:aws:s3:::medicare-fraud-processed/*"
+       "arn:aws:s3:::medicare-fraud-raw-023413058557",
+       "arn:aws:s3:::medicare-fraud-raw-023413058557/*",
+       "arn:aws:s3:::medicare-fraud-processed-023413058557",
+       "arn:aws:s3:::medicare-fraud-processed-023413058557/*",
+       "arn:aws:s3:::medicare-fraud-analytics-023413058557",
+       "arn:aws:s3:::medicare-fraud-analytics-023413058557/*"
      ]
    }
  ]
