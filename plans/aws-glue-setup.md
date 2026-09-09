@@ -72,7 +72,7 @@ Step 1: Create the IAM Role for AWS Glue
   Save the PySpark script defined in Phase 2 of @plans/general-plan.md to a local file named
   medicare_etl.py and upload it to an administrative path in S3.
 
-   1 aws s3 cp medicare_etl.py s3://medicare-fraud-raw/scripts/medicare_etl.py
+   1 aws s3 cp medicare_etl.py s3://medicare-fraud-raw-023413058557/scripts/medicare_etl.py
    * Explanation: Copies your local script into S3 so the serverless Glue Spark engines can
      fetch and run it.
 
