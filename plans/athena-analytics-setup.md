@@ -32,9 +32,11 @@ aws athena update-work-group --work-group primary --configuration-updates "Resul
 
 Before running analytical queries, verify that the Glue Crawler successfully discovered all partition levels (`Year` and `State`) and mapped the table columns correctly.
 
-### Check Table Information
-```sql
-SHOW CREATE TABLE medicare_db.inpatient_processed;
+### Check Table Information (run in aws cli or in athena)
+```bash
+aws athena start-query-execution  --query-string "SHOW CREATE TABLE medicare_db.inpatient_processed"   --query-execution-context Database=medicare_db --work-group primary
+
+aws athena get-query-results --query-execution-id <query id > | jq
 ```
 
 ### Show Discovered Partitions
@@ -79,17 +81,17 @@ LIMIT 50;
 Look for high-value claims where patients were admitted and discharged on the same day or within 24 hours.
 
 ```sql
-SELECT 
+SELECT
     provider,
     claimid,
     inscclaimamtreimbursed,
     deductibleamtpaid,
     admissiondt,
     dischargedt,
-    date_diff('day', date_parse(admissiondt, '%Y%m%d'), date_parse(dischargedt, '%Y%m%d')) AS length_of_stay
+    date_diff('day', admissiondt, dischargedt) AS length_of_stay
 FROM medicare_db.inpatient_processed
 WHERE admissiondt = dischargedt  -- Same day stay
-   OR date_diff('day', date_parse(admissiondt, '%Y%m%d'), date_parse(dischargedt, '%Y%m%d')) <= 1
+   OR date_diff('day', admissiondt, dischargedt) <= 1
 ORDER BY inscclaimamtreimbursed DESC
 LIMIT 50;
 ```
