@@ -98,7 +98,7 @@ print("\n" + "="*50)
 print("4. WRITING OUTPUT PARQUET (PARTITIONED BY YEAR AND STATE)")
 print("="*50)
 if IS_LOCAL:
-    df.write.mode("overwrite").partitionBy("Year", "State").parquet(OUTPUT_PATH)
+    df.coalesce(1).write.mode("overwrite").partitionBy("Year", "State").parquet(OUTPUT_PATH)
     print(f"Successfully saved multi-level partitioned Parquet output to local path: {OUTPUT_PATH}")
     
     print("\n" + "="*50)
@@ -116,5 +116,5 @@ if IS_LOCAL:
             print(f"Discovered nested State partitions inside {years[0]}: {states[:5]}... (showing up to 5)")
     print("ETL job verification: SUCCESS!")
 else:
-    df.write.mode("overwrite").partitionBy("Year", "State").parquet(OUTPUT_PATH)
+    df.coalesce(1).write.mode("overwrite").partitionBy("Year", "State").parquet(OUTPUT_PATH)
 

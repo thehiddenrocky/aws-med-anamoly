@@ -40,10 +40,10 @@ To enable multi-level partitioning, the PySpark script was updated with the foll
    df = df.withColumn("Year", F.substring(F.col("ClaimStartDt"), 1, 4))
    ```
 
-3. **Multi-Level Partition Writing**:
-   We outputted the final dataframe using the `.partitionBy("Year", "State")` modifier. This outputs a Hive-style layout in S3 (e.g., `Year=2008/State=39/`).
+3. **Multi-Level Partition Writing with Coalesce (1)**:
+   To prevent Spark from writing multiple small file fragments inside each partition directory (the "small file problem"), we use `.coalesce(1)` before saving. This collapses parallel writing tasks into exactly **one output file** per partition folder:
    ```python
-   df.write.mode("overwrite").partitionBy("Year", "State").parquet(OUTPUT_PATH)
+   df.coalesce(1).write.mode("overwrite").partitionBy("Year", "State").parquet(OUTPUT_PATH)
    ```
 
 ---
@@ -119,3 +119,27 @@ inpatient_processed/
 ```
 
 This nested structure allows Amazon Athena and AWS Glue Crawlers to register partitions perfectly, optimizing query performance and costs down the road!
+
+---
+
+## Engineering Realizations & Optimization History
+
+### The Discovery: The "Small File Problem"
+During our post-execution validation, we inspected the physical files written to S3 and noticed a critical architectural issue:
+* **Observation:** Each nested partition directory (e.g., `Year=2008/State=39/`) contained multiple small file fragments (e.g., `part-00000`, `part-00001`, `part-00002`), each averaging between **8 KB and 12 KB** in size.
+* **Why did this happen?** 
+  1. **High Partition Granularity vs. Small Dataset:** We split a small sample dataset across ~100 distinct partition folders (2 Years × ~50 States).
+  2. **Spark Parallelism:** PySpark distributes tasks across multiple parallel executors. By default, each executor writes its own separate part file, splitting our already-tiny partition data even further.
+
+### Why is this a Problem in Production?
+While harmless in a small test environment, deploying this layout at production-scale is a major anti-pattern due to:
+1. **S3 Request Overheads:** Query engines (like Athena) charge by data scanned, but S3 itself charges per API call ($0.005 per 1,000 GET requests). Fetching thousands of 10 KB files instead of a few 128 MB files can multiply S3 request costs by **100x**.
+2. **Metadata Saturation & Query Latency:** Athena has to open, parse the footer, and close thousands of separate files. The metadata overhead severely degrades query performance.
+3. **Production Guideline:** The target size for production Parquet files is between **128 MB and 1 GB**.
+
+### The Solution: Coalesce (1)
+To address this, we integrated `.coalesce(1)` immediately prior to writing the data.
+* **Under the Hood:** `.coalesce(1)` forces Spark to collapse all parallel writing executors into **exactly one worker** before executing the write.
+* **The Result:** Instead of 3 separate 3 KB fragments, Spark writes **exactly one consolidated Parquet file** containing all regional data for that specific partition.
+* **The Learning Trade-off:** For a dataset this small (~118 MB total), partitioning is technically unnecessary (flat files are preferred under 10 GB). However, applying `.coalesce(1)` allowed us to preserve the valuable multi-level partition-pruning schema for learning Glue Crawlers and Athena, while demonstrating proper architectural hygiene.
+
