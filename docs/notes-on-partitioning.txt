@@ -1,0 +1,137 @@
+1. Why Partition at all if the Dataset is Small?
+
+  The short answer: For a truly small dataset, you shouldn't partition.
+
+  If a dataset is small (under 10 GB), partitioning is actually an
+  anti-pattern. It introduces unnecessary S3 metadata overhead, slows
+  down query engines, and increases request costs.
+
+  In this project, we partitioned the data purely for learning purposes.
+  It allowed us to practice and master:
+   * How PySpark translates in-memory dataframes into nested, Hive-style
+     folder structures (Year=YYYY/State=XX).
+   * How AWS Glue Crawlers automatically discover and catalog nested
+     schemas.
+   * How Amazon Athena queries partitioned structures.
+
+  In a real production environment, if your raw input data is only a few
+  megabytes or gigabytes, you would simply write it as a single, flat
+  set of Parquet files with no partitions at all.
+
+  ---
+
+  2. How to Check S3 Data Size First (AWS Commands)
+
+  Before deciding on a partitioning strategy, you must always audit the
+  size of your raw data. Here are the AWS commands to analyze your
+  bucket:
+
+  Command A: Get the Total Size of a Directory/Folder
+  This command recursive-lists a directory and outputs a human-readable
+  summary of the total files and size.
+
+   1 aws s3 ls s3://your-bucket-name/raw-data/ \
+   2     --recursive \
+   3     --human-readable \
+   4     --summarize
+   * Look at the bottom line: If the total size is less than 10 GB, you
+     should strongly consider keeping it unpartitioned.
+
+  Command B: Check the Size of a Single File (if it is one large CSV)
+
+   1 aws s3 ls s3://your-bucket-name/raw-data/Train_Inpatientdata.csv \
+   2     --human-readable
+
+  ---
+
+  3. How to Determine if Partitioning is Necessary
+
+  Use this standard checklist to decide whether to partition your
+  dataset:
+
+    1                Is the raw dataset size > 10 GB?
+    2                         /             \
+    3                       YES              NO ──> DO NOT PARTITION
+      (Keep as flat Parquet)
+    4                       /
+    5     Are there columns frequently used in WHERE filters?
+    6                     /             \
+    7                   YES              NO ──> DO NOT PARTITION
+    8                   /
+    9       Is the column's cardinality low/medium?
+   10       (e.g., < 1,000 unique values, like Year/State/Category)
+   11                 /             \
+   12               YES              NO ──> DO NOT PARTITION (e.g.,
+      unique dates, NPI, IDs)
+   13               /
+   14       ⭐⭐ PARTITION APPROVED ⭐⭐
+
+  The Heuristics:
+   1. Size Threshold: Only partition if the table size is large
+      (typically > 10 GB, and definitely if > 100 GB). If it is smaller,
+      a fast query engine like Athena can scan the entire dataset in
+      seconds anyway, and Athena's minimum billing charge per query is
+      10 MB anyway.
+   2. Query Pattern Alignment: Only partition on columns that your users
+      or dashboard queries will actually use in their WHERE or JOIN
+      filters. Partitioning on State is useless if 99% of your queries
+      filter by Specialty.
+   3. Cardinality Check (Critical!):
+      * Low-to-Medium Cardinality (Good): Columns with few unique values
+        (e.g., Year (5-10 values), State (50 values), ClaimType (3
+        values)).
+      * High Cardinality (Bad): Columns with millions of unique values
+        (e.g., Provider_NPI, ClaimID, TransactionTimestamp).
+        Partitioning on these will create millions of empty/tiny S3
+        folders, completely breaking performance and driving up S3
+        request costs.
+
+  ---
+
+  4. How to Determine the Best Strategy for Our Medicare Data
+
+  Let's evaluate the columns in our Medicare claims dataset against
+  these principles:
+
+  ┌──────────┬─────────────┬────────────┬────────────┬──────────────┐
+  │ Column   │ Cardinality │ Frequently │ Partition  │ Verdict /    │
+  │          │             │ Queried?   │ Candidate? │ Reason       │
+  ├──────────┼─────────────┼────────────┼────────────┼──────────────┤
+  │ ClaimID  │ Extremely   │ Yes, for   │ ❌ No      │ Too unique.  │
+  │          │ High        │ lookup     │            │ Would create │
+  │          │ (Unique)    │            │            │ one folder   │
+  │          │             │            │            │ per claim.   │
+  │ Provider │ High        │ Yes, for   │ ❌ No      │ Too unique.  │
+  │ NPI      │ (~100,000s) │ fraud      │            │ Best handled │
+  │          │             │ check      │            │ by building  │
+  │          │             │            │            │ a Parquet    │
+  │          │             │            │            │ index or     │
+  │          │             │            │            │ sorting the  │
+  │          │             │            │            │ data inside  │
+  │          │             │            │            │ the files    │
+  │          │             │            │            │ rather than  │
+  │          │             │            │            │ partitioning │
+  │          │             │            │            │ directories. │
+  │ State    │ Low (50     │ Yes,       │ Yes        │ Excellent    │
+  │          │ unique      │ regional   │            │ candidate.   │
+  │          │ states)     │ analytics  │            │ Helps limit  │
+  │          │             │            │            │ queries to   │
+  │          │             │            │            │ specific     │
+  │          │             │            │            │ regions.     │
+  │ Year     │ Extremely   │ Yes,       │ Yes        │ Excellent    │
+  │          │ Low (e.g.,  │ temporal   │            │ candidate.   │
+  │          │ 2008, 2009) │ trends     │            │ Temporal     │
+  │          │             │            │            │ pruning is   │
+  │          │             │            │            │ highly       │
+  │          │             │            │            │ effective.   │
+  └──────────┴─────────────┴────────────┴────────────┴──────────────┘
+
+  Our Ideal Production Strategy:
+  If we had 500 GB of Medicare Claims:
+   * We would partition by Year first (e.g., Year=2008/), and stop
+     there.
+   * Under each year, we would keep the data unpartitioned but sort the
+     records internally inside the Parquet files by State and
+     Provider_NPI. This allows query engines to skip reading parts of
+     the Parquet file without creating a mess of S3 folders!
+
