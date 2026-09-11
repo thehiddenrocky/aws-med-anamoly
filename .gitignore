@@ -1,3 +1,5 @@
+*.parquet
+*.joblib
 .env
 .DS_Store
 **/.DS_Store
