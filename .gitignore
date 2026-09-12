@@ -1,3 +1,5 @@
+lambda_deploy.zip
+lamda_package
 *.parquet
 *.joblib
 .env
