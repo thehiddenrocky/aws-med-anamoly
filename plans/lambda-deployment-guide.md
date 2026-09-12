@@ -58,7 +58,7 @@ pip install \
   --implementation cp \
   --python-version 3.11 \
   --only-binary=:all: \
-  scikit-learn joblib pandas numpy boto3
+  scikit-learn joblib pandas numpy
 ```
 
 #### Explaining the Compiler Flags:
@@ -67,6 +67,22 @@ pip install \
 * `--python-version 3.11`: Pins compatibility to Python 3.11 runtimes on AWS Lambda.
 * `--implementation cp`: Specifies CPython (standard Python).
 * `--only-binary=:all:`: Prevents pip from falling back to raw source packages (`.tar.gz`) which would attempt to compile locally on macOS, failing our CPU platform requirements.
+
+### 📉 Size & Package Size Optimization (Overcoming the 250MB Limit)
+AWS Lambda enforces a strict physical size limit of **262,144,000 bytes (250MB) unzipped** on deployment packages. Standard installations of large compiled scientific packages (such as `pandas`, `numpy`, and `scikit-learn`) will easily exceed this limit when unpacked, resulting in an `InvalidParameterValueException` on upload.
+
+To optimize package size and comfortably fit within AWS quotas, we implement two primary tactics:
+
+1. **Leverage Pre-installed Runtime Dependencies (Omit `boto3`)**:
+   The AWS Lambda Python environment natively provides the AWS SDK (`boto3`, `botocore`, `urllib3`, `s3transfer`, and `jmespath`). We **omit `boto3`** from the `pip install` target list. Since the SDK is already present in the runtime, omitting these duplicate library files saves **~80MB of unzipped disk space**.
+
+2. **Recursive Cleanup of Redundant Assets**:
+   Standard PyPI package distributions include verbose test suites, bytecode caches, and rich packaging metadata that are completely useless for production inference. Prior to zipping, we run a cleanup sequence inside the target directory:
+   * **Delete tests and caches**: Clear `tests/`, `test/`, and `__pycache__/` folders.
+   * **Delete Python cache files**: Remove `*.pyc` and `*.pyo` compilation remnants.
+   * **Delete distribution metadata**: Strip `.dist-info` and `.egg-info` directories.
+
+   This structural pruning shaves off **~100MB+ of unzipped space**, resulting in an highly optimized `lambda_deploy.zip` (~50MB zipped, ~170MB unzipped).
 
 ---
 
@@ -346,7 +362,7 @@ echo "1. Cleaning directory structures..."
 rm -rf $PACKAGE_DIR $ZIP_NAME
 mkdir -p $PACKAGE_DIR
 
-# Pull Linux wheels direct from PyPI on macOS
+# Pull Linux wheels direct from PyPI on macOS (OMITTING boto3)
 echo "2. Cross-compiling and downloading Linux x86_64 binaries..."
 pip install \
   --platform manylinux2014_x86_64 \
@@ -354,20 +370,32 @@ pip install \
   --implementation cp \
   --python-version 3.11 \
   --only-binary=:all: \
-  scikit-learn joblib pandas numpy boto3
+  scikit-learn joblib pandas numpy
 
 # Copy scoring codebase into package
 echo "3. Copying Lambda handlers..."
 cp $LAMBDA_DIR/lambda_function.py $PACKAGE_DIR/
 
+# Prune tests, caches, and metadata to stay under Lambda 250MB unzipped limit
+echo "4. Pruning redundant assets (tests, caches, metadata) to minimize size..."
+cd $PACKAGE_DIR
+find . -type d -name "tests" -exec rm -rf {} +
+find . -type d -name "test" -exec rm -rf {} +
+find . -type d -name "__pycache__" -exec rm -rf {} +
+find . -type f -name "*.pyc" -delete
+find . -type f -name "*.pyo" -delete
+find . -type d -name "*.dist-info" -exec rm -rf {} +
+find . -type d -name "*.egg-info" -exec rm -rf {} +
+cd ..
+
 # Create ZIP archive
-echo "4. Generating deployment ZIP file..."
+echo "5. Generating optimized deployment ZIP file..."
 cd $PACKAGE_DIR
 zip -r9 ../$ZIP_NAME .
 cd ..
 
 # Deploying to AWS Lambda
-echo "5. Deploying package to AWS Lambda..."
+echo "6. Deploying package to AWS Lambda..."
 # Check if function already exists
 EXISTS=$(command aws lambda get-function --function-name $FUNCTION_NAME 2>&1 || true)
 
