@@ -141,10 +141,26 @@ We will proceed with the implementation using this highly optimized, serverless 
 * ✅ Train local Scikit-Learn Isolation Forest and serialize artifacts (`model.joblib`, `scaler.joblib`).
 * ✅ Verify that known targets (`PRV53033`, `PRV52627`, `PRV53471`) are accurately scored and flagged in the top 5% anomalies.
 
-### 📍 Phase 2: Deploy Serverless Model Store (Next Step)
+### 📍 Phase 2: Deploy Serverless Model Store (IN PROGRESS)
 * ◽ Upload pre-trained `model.joblib` and `scaler.joblib` to S3 under `s3://medicare-fraud-analytics-023413058557/models/`.
-* ◽ Package a lightweight Lambda Deployment ZIP containing `scikit-learn`, `pandas`, and `joblib`.
-* ◽ Implement AWS Lambda inference logic to download models from S3 on startup and score request payloads.
+  * *Execution Command*:
+    ```bash
+    aws s3 cp model.joblib s3://medicare-fraud-analytics-023413058557/models/model.joblib
+    aws s3 cp scaler.joblib s3://medicare-fraud-analytics-023413058557/models/scaler.joblib
+    ```
+* ◽ Package a lightweight Lambda Deployment ZIP containing `scikit-learn` and `joblib`.
+  * *Challenge*: Running macOS without Docker can cause a platforms mismatch in Lambda (which requires Linux ELF binaries instead of macOS Mach-O).
+  * *Solution*: Package by downloading Linux 64-bit wheels directly from PyPI on macOS:
+    ```bash
+    pip install \
+      --platform manylinux2014_x86_64 \
+      --target=lambda_package \
+      --implementation cp \
+      --python-version 3.11 \
+      --only-binary=:all: \
+      scikit-learn joblib pandas numpy
+    ```
+* ◽ Implement AWS Lambda inference logic (`lambda-scoring/lambda_function.py`) to download models from S3 on startup and score request payloads.
 
 ### 📍 Phase 3: Setup Fast Cache & NoSQL (DynamoDB Setup)
 * ◽ Create a DynamoDB table `medicare_provider_scores` (Hash Key: `provider_id`).
