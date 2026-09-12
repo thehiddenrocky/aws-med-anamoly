@@ -2,42 +2,46 @@
 
 This document details the optimized implementation plan to integrate AWS Bedrock (Claude 4.5 Haiku) and Amazon DynamoDB caching directly into the real-time scoring Lambda (`medicare-provider-scorer`) **without using `boto3` or `botocore`**. 
 
-By using standard Python libraries (`urllib.request`, `hashlib`, `hmac`, `datetime`) to construct and sign raw AWS API requests using Signature Version 4 (SigV4), we achieve:
-* **Zero External Dependencies**: Smaller zip deployment packages.
-* **Extreme Memory Optimization**: Avoids the ~100MB+ memory import overhead of `boto3`/`botocore`.
-* **Ultra-Fast Cold Starts**: Execution starts in milliseconds since no heavy SDK packages are loaded.
+This plan is strictly aligned with the API Gateway proxy integration format verified in `test_test_sample_on_lambda.py`.
 
 ---
 
 ## 🗺️ High-Level Flow (Request-Response Lifecycle)
 
 ```text
-                  [ User API Request ] (POST /score { "provider": "12345", ... })
-                            │
-                            ▼
-               [ Check DynamoDB Cache ]  ◄─── Direct HTTP call via urllib (GetItem + SigV4)
-                            │
-             ┌──────────────┴──────────────┐
-             ▼ (Cache Hit)                 ▼ (Cache Miss / Forced Refresh)
-     [ Return Saved Response ]     [ Run local Isolation Forest ML model ]
-     - Score & Risk Level          - Calculate anomaly score (-0.82)
-     - Bedrock Analysis Summary    - Categorize risk (CRITICAL/HIGH/MEDIUM/LOW)
-                                           │
-                                           ▼
-                                 [ Is Risk Level ≥ HIGH? ]
-                                           │
-                             ┌─────────────┴─────────────┐
-                             ▼ (Yes)                     ▼ (No)
-                     [ Amazon Bedrock ]            [ Skip Bedrock ]
-                     - Model: Claude 4.5 Haiku     - Set analysis to "N/A"
-                     - Direct HTTP POST (SigV4)    
-                             │                           │
-                             └─────────────┬─────────────┘
-                                           ▼
-                                [ Save to DynamoDB Cache ] ◄── Direct HTTP call via urllib (PutItem + SigV4)
-                                           │
-                                           ▼
-                               [ CORS-Enabled JSON Output ]
+                  [ User API Gateway Proxy Request ] (POST /score)
+                  Payload format: { "body": "{\"provider\": \"PRV57070\", ...}" }
+                                         │
+                                         ▼
+                     [ Parse Input Event & Extract Provider NPI ]
+                                         │
+                                         ▼
+                  [ Check DynamoDB Cache via GetItem (SigV4) ]
+                                         │
+             ┌───────────────────────────┴───────────────────────────┐
+             ▼ (Cache Hit)                                           ▼ (Cache Miss)
+     [ Standard API response ]                               [ Run Isolation Forest ML ]
+     - Status: 200                                           - Calculate score (-0.81)
+     - Headers: CORS-enabled                                 - Determine Risk Level
+     - Body: Cached fields + GenAI analysis                            │
+                                                                       ▼
+                                                             [ Is Risk Level ≥ HIGH? ]
+                                                                       │
+                                                       ┌───────────────┴───────────────┐
+                                                       ▼ (Yes)                         ▼ (No)
+                                               [ Amazon Bedrock ]                [ Skip Bedrock ]
+                                               - Claude 4.5 Haiku                - Set analysis to "N/A"
+                                               - Direct Invoke (SigV4)
+                                                       │                               │
+                                                       └───────────────┬───────────────┘
+                                                                       ▼
+                                                          [ Save to DynamoDB Cache ]
+                                                          - Write via PutItem (SigV4)
+                                                                       │
+                                                                       ▼
+                                                           [ Standard API Response ]
+                                                           - Return status 200
+                                                           - Body with ML score & GenAI analysis
 ```
 
 ---
@@ -47,20 +51,24 @@ By using standard Python libraries (`urllib.request`, `hashlib`, `hmac`, `dateti
 When a provider is flagged as **HIGH** or **CRITICAL** risk, we invoke Bedrock with a structured prompt.
 
 **System Instructions:**
-> You are an expert Medicare fraud investigation assistant. Analyze the provided clinical/financial billing metrics of the provider against the anomaly detection output. Generate a professional, objective 2-sentence summary detailing exactly which features look suspicious (e.g., high claims-to-patient ratio or excessive length of stay) and what an investigator should look into.
+```text
+You are an expert Medicare fraud investigation assistant. Analyze the provided clinical/financial billing metrics of the provider against the anomaly detection output. Generate a professional, objective 2-sentence summary detailing exactly which features look suspicious (e.g., high claims-to-patient ratio or excessive length of stay) and what an investigator should look into.
+```
 
-**Dynamic Prompt Payload:**
+**Dynamic Prompt Payload Structure:**
 ```json
 {
-  "provider": "1234567890",
-  "anomaly_score": -0.8152,
+  "provider": "PRV57070",
+  "anomaly_score": -0.815200,
   "risk_level": "CRITICAL",
   "metrics": {
     "total_claims": 845,
     "unique_patients": 12,
     "avg_length_of_stay": 14.2,
     "avg_daily_reimbursement": 3450.0,
-    "claims_per_patient_ratio": 70.4
+    "max_daily_reimbursement": 12000.0,
+    "claims_per_patient_ratio": 70.4,
+    "high_daily_claims_ratio": 0.05
   }
 }
 ```
@@ -69,21 +77,23 @@ When a provider is flagged as **HIGH** or **CRITICAL** risk, we invoke Bedrock w
 
 ## 🗄️ DynamoDB Schema Design (`medicare_provider_scores`)
 
-* **Partition Key (PK)**: `provider` (String, e.g., `"1234567890"`)
+The DynamoDB table keeps the schema aligned with the structured JSON body returned by the API proxy format.
+
+* **Partition Key (PK)**: `provider` (String, e.g., `"PRV57070"`)
 * **Attributes**:
-    * `anomaly_score` (Number, e.g., `-0.8152`)
+    * `anomaly_score` (Number, e.g., `-0.815200`)
     * `is_anomaly` (Boolean, e.g., `true`)
     * `risk_level` (String, e.g., `"CRITICAL"`)
     * `genai_analysis` (String, human-readable summary or `"N/A"`)
-    * `features` (Map/JSON of the input features)
-    * `timestamp` (String, ISO-8601 creation timestamp)
+    * `features_json` (String, JSON-serialized string of the input metrics)
+    * `timestamp` (String, ISO-8601 creation timestamp, e.g., `"2026-09-13T12:00:00Z"`)
     * `ttl` (Number, UNIX Epoch timestamp to auto-expire the cache after 30 days)
 
 ---
 
 ## ⚙️ Boto3-Free AWS SigV4 Request Signer (Standard Library Only)
 
-To make requests to DynamoDB and Bedrock without `boto3`, we implement a pure Python helper module inside the Lambda handler. This module reads AWS IAM credentials from the Lambda environment (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`) and signs HTTP requests.
+Standard AWS Lambda Python runtimes pre-inject standard credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`) into environment variables. The SigV4 signer handles request formatting, signing, and execution natively.
 
 ### Core SigV4 Helper Implementation Details
 
@@ -124,7 +134,7 @@ def aws_sigv4_request(service, region, host, endpoint, method, payload_str, acti
     canonical_uri = endpoint
     canonical_querystring = ''
     
-    # 1. Headers required for signing
+    # Headers required for signing
     headers = {
         'host': host,
         'x-amz-date': amz_date,
@@ -166,8 +176,13 @@ def aws_sigv4_request(service, region, host, endpoint, method, payload_str, acti
     url = f"https://{host}{endpoint}"
     req = urllib.request.Request(url, data=payload_str.encode('utf-8'), headers=request_headers, method=method)
     
-    with urllib.request.urlopen(req) as response:
-        return response.read().decode('utf-8')
+    try:
+        with urllib.request.urlopen(req) as response:
+            return response.read().decode('utf-8')
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8')
+        print(f"AWS HTTPError: {e.code} {e.reason} - Body: {error_body}")
+        raise
 ```
 
 ---
@@ -175,14 +190,14 @@ def aws_sigv4_request(service, region, host, endpoint, method, payload_str, acti
 ## 🛠️ Direct AWS Service Payloads
 
 ### 1. DynamoDB: `GetItem` (Cache Lookup)
-* **Endpoint**: `/` (DynamoDB API uses root-level POST calls)
+* **Endpoint**: `/`
 * **X-Amz-Target**: `DynamoDB_20120810.GetItem`
 * **JSON Payload**:
 ```json
 {
   "TableName": "medicare_provider_scores",
   "Key": {
-    "provider": { "S": "1234567890" }
+    "provider": { "S": "PRV57070" }
   }
 }
 ```
@@ -195,11 +210,11 @@ def aws_sigv4_request(service, region, host, endpoint, method, payload_str, acti
 {
   "TableName": "medicare_provider_scores",
   "Item": {
-    "provider": { "S": "1234567890" },
-    "anomaly_score": { "N": "-0.8152" },
+    "provider": { "S": "PRV57070" },
+    "anomaly_score": { "N": "-0.815200" },
     "is_anomaly": { "BOOL": true },
     "risk_level": { "S": "CRITICAL" },
-    "genai_analysis": { "S": "Investigation summary text here..." },
+    "genai_analysis": { "S": "Dr. PRV57070 is flagged at CRITICAL risk..." },
     "features_json": { "S": "{\"total_claims\": 845, ...}" },
     "timestamp": { "S": "2026-09-13T12:00:00Z" },
     "ttl": { "N": "1789300800" }
@@ -207,7 +222,7 @@ def aws_sigv4_request(service, region, host, endpoint, method, payload_str, acti
 }
 ```
 
-### 3. AWS Bedrock: `InvokeModel` (Claude 4.5 Haiku)
+### 3. AWS Bedrock: `InvokeModel` (Claude 4.5 Haiku via US Inference Profile)
 * **Endpoint**: `/model/us.anthropic.claude-haiku-4-5-20251001-v1:0/invoke`
 * **Host**: `bedrock-runtime.us-east-1.amazonaws.com`
 * **JSON Payload**:
@@ -231,14 +246,30 @@ def aws_sigv4_request(service, region, host, endpoint, method, payload_str, acti
 
 ---
 
-## 📋 Implementation Steps for Lambda Deployment
+## 📋 Implementation Steps for Lambda Integration
 
 1. **Integrate Helpers in `lambda-scoring.py`**: Inject the standard library SigV4 helper and request handlers into the main Lambda file.
 2. **Implement Sequential Integration Logic**:
-   * **Step A**: Parse request. Extract the `provider` NPI.
-   * **Step B**: Invoke DynamoDB `GetItem` via helper. If an item exists, return it immediately as a fast cache hit.
-   * **Step C**: If cache miss, calculate score using local scikit-learn/joblib models loaded from `/tmp`.
-   * **Step D**: If risk is `HIGH`/`CRITICAL`, invoke Bedrock (`us.anthropic.claude-haiku-4-5-20251001-v1:0`) via helper.
-   * **Step E**: Save results to DynamoDB via `PutItem` helper.
-   * **Step F**: Respond to client.
-3. **Verify Local Mock & Testing**: Run offline simulation tests with mocked HTTP responses to ensure correctness of math models and request serialization prior to staging.
+   * **Step A (Parse)**: Extract features from the nested event body:
+     ```python
+     body_str = event.get('body', '{}') or '{}'
+     data = json.loads(body_str)
+     provider_id = data.get('provider')
+     ```
+   * **Step B (Cache Lookup)**: Call DynamoDB `GetItem` via pure Python SigV4. If found, deserialize attributes and return the response immediately wrapped inside standard `format_response(200, cached_body)`:
+     ```python
+     # Example deserializer logic inside lambda
+     cached_body = {
+         "provider": item["provider"]["S"],
+         "anomaly_score": float(item["anomaly_score"]["N"]),
+         "is_anomaly": item["is_anomaly"]["BOOL"],
+         "risk_level": item["risk_level"]["S"],
+         "genai_analysis": item["genai_analysis"]["S"],
+         "features": json.loads(item["features_json"]["S"])
+     }
+     return format_response(200, cached_body)
+     ```
+   * **Step C (ML Inference)**: On cache miss, run scikit-learn models as usual to calculate score, outlier flag, and risk level.
+   * **Step D (GenAI Enriched Summary)**: If the risk level is `HIGH` or `CRITICAL`, construct the Bedrock dynamic prompt payload and trigger `aws_sigv4_request` for Bedrock to get the explanation.
+   * **Step E (Cache Write)**: Save results (ML scores, features, and GenAI summaries) back to DynamoDB via `PutItem` so future requests hitting Lambda bypass both execution and model-inference latency entirely.
+   * **Step F (Respond)**: Format CORS CORS-enabled HTTP output exactly matching proxy specifications.
