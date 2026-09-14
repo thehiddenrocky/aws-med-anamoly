@@ -3,7 +3,70 @@ import json
 import subprocess
 import os
 
+def load_aws_credentials():
+    """
+    Attempts to load AWS credentials from credentials/aws-access-key.json and set them as 
+    environment variables so the AWS CLI subprocess inherits them.
+    """
+    possible_paths = [
+        os.path.join(os.getcwd(), 'credentials/aws-access-key.json'),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'credentials/aws-access-key.json'),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'credentials/aws-access-key.json'),
+        'credentials/aws-access-key.json'
+    ]
+    
+    for path in possible_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, 'r') as f:
+                    data = json.load(f)
+                
+                access_key = None
+                secret_key = None
+                session_token = None
+                
+                if isinstance(data, dict):
+                    if 'AccessKey' in data and isinstance(data['AccessKey'], dict):
+                        ak = data['AccessKey']
+                        access_key = ak.get('AccessKeyId') or ak.get('accessKeyId')
+                        secret_key = ak.get('SecretAccessKey') or ak.get('secretAccessKey')
+                    
+                    if not access_key:
+                        access_key = (
+                            data.get('aws_access_key_id') or 
+                            data.get('AWS_ACCESS_KEY_ID') or 
+                            data.get('AccessKeyId') or 
+                            data.get('access_key')
+                        )
+                    if not secret_key:
+                        secret_key = (
+                            data.get('aws_secret_access_key') or 
+                            data.get('AWS_SECRET_ACCESS_KEY') or 
+                            data.get('SecretAccessKey') or 
+                            data.get('secret_key')
+                        )
+                    session_token = (
+                        data.get('aws_session_token') or 
+                        data.get('AWS_SESSION_TOKEN') or 
+                        data.get('SessionToken') or 
+                        data.get('session_token')
+                    )
+                
+                if access_key and secret_key:
+                    os.environ['AWS_ACCESS_KEY_ID'] = access_key
+                    os.environ['AWS_SECRET_ACCESS_KEY'] = secret_key
+                    if session_token:
+                        os.environ['AWS_SESSION_TOKEN'] = session_token
+                    print(f"[CREDENTIALS] Successfully loaded AWS credentials from {path}")
+                    return True
+            except Exception as e:
+                print(f"[CREDENTIALS] Warning: Failed to parse credentials file at {path}: {e}")
+    return False
+
 def main():
+    # Load credentials first so child CLI processes inherit them
+    load_aws_credentials()
+
     # 1. Read the raw sample data
     csv_path = 'datasets/samples/train_inpatient_sample.csv'
     print(f"Reading raw claims from {csv_path}...")
