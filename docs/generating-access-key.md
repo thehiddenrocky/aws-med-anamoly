@@ -6,11 +6,12 @@ Step 1: Create a New IAM User
 
   Step 2: Attach a Policy (Optional but Recommended)
   A newly created user has zero permissions by default. You need to attach a policy so the user can interact
-  with services like S3, DynamoDB, or Lambda. For example, to give this user full S3 permissions:
+  with services like S3, DynamoDB, or Lambda. For example, to give this user custom S3 and Lambda access:
 
-   1 aws iam attach-user-policy \
+   1 aws iam put-user-policy \
    2     --user-name developer-user \
-   3     --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess
+   3     --policy-name DeveloperS3AndLambdaAccess \
+   4     --policy-document file://policies/developer-policy.json
 
   Step 3: Generate the Access Key and Secret Key
   Now, generate the programmatic credentials for this user:
