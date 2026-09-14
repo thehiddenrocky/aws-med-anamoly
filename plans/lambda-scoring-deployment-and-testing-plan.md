@@ -313,12 +313,8 @@ To expose the serverless ML scoring engine as a secure REST API endpoint, integr
    ```
 2. **Configure Permissions**: Authorize API Gateway to trigger the scoring Lambda function:
    ```bash
-   command aws lambda add-permission \
-       --function-name medicare-provider-scorer \
-       --statement-id apigateway-trigger \
-       --action lambda:InvokeFunction \
-       --principal apis.amazonaws.com \
-       --source-arn "arn:aws:execute-api:us-east-1:023413058557:<API_ID>/*/*/score"
+aws lambda add-permission --function-name medicare-provider-scorer --statement-id apigateway-trigger --action lambda:InvokeFunction  --principal apigateway.amazonaws.com --source-arn "arn:aws:execute-api:us-east-1:023413058557:z2373xvbgh/*/*/score"
+
    ```
 3. **Configure CORS**: Ensure CORS pre-flights are allowed so Web frontends can call the API:
    - Allowed Origins: `*`
