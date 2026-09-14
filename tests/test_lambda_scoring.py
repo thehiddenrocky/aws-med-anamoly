@@ -65,10 +65,12 @@ class TestLambdaScoring(unittest.TestCase):
         self.assertIn("error", body)
         self.assertIn("Invalid JSON payload", body["error"])
 
-    def test_missing_features_payload(self):
+    @patch('lambda_scoring.check_dynamodb_cache')
+    def test_missing_features_payload(self, mock_cache):
         """
         Verify that requests missing required features return 400 Bad Request with details.
         """
+        mock_cache.return_value = None  # Force cache miss so we proceed to validation
         bad_features = self.mock_features.copy()
         del bad_features["total_claims"]  # Remove a required feature
         
