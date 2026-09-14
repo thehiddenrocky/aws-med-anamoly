@@ -93,7 +93,7 @@ The serving Lambda downloads and warm-caches the trained model parameters on con
 
 #### Upload Commands (AWS CLI):
 ```bash
-command aws s3 cp rcf_train.csv s3://medicare-fraud-analytics-023413058557/models/model.joblib
+command aws s3 cp model.joblib s3://medicare-fraud-analytics-023413058557/models/model.joblib
 command aws s3 cp scaler.joblib s3://medicare-fraud-analytics-023413058557/models/scaler.joblib
 ```
 *(Verify the objects exist in S3 using `aws s3 ls s3://medicare-fraud-analytics-023413058557/models/`)*.
