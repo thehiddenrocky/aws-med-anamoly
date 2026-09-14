@@ -1,0 +1,31 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "LambdaInvokeAccess",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:InvokeFunction"
+      ],
+      "Resource": "arn:aws:lambda:us-east-1:023413058557:function:medicare-provider-scorer"
+    },
+    {
+      "Sid": "S3BucketAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::medicare-fraud-raw-023413058557",
+        "arn:aws:s3:::medicare-fraud-raw-023413058557/*",
+        "arn:aws:s3:::medicare-fraud-processed-023413058557",
+        "arn:aws:s3:::medicare-fraud-processed-023413058557/*",
+        "arn:aws:s3:::medicare-fraud-analytics-023413058557",
+        "arn:aws:s3:::medicare-fraud-analytics-023413058557/*"
+      ]
+    }
+  ]
+}
