@@ -2,6 +2,7 @@
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "S3ModelAccess",
       "Effect": "Allow",
       "Action": [
         "s3:GetObject"
@@ -9,6 +10,24 @@
       "Resource": "arn:aws:s3:::medicare-fraud-analytics-023413058557/models/*"
     },
     {
+      "Sid": "DynamoDBCacheAccess",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem"
+      ],
+      "Resource": "arn:aws:dynamodb:*:*:table/medicare_provider_scores"
+    },
+    {
+      "Sid": "BedrockClaudeAccess",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel"
+      ],
+      "Resource": "arn:aws:bedrock:us-east-1::foundation-model/us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    },
+    {
+      "Sid": "CloudWatchLogging",
       "Effect": "Allow",
       "Action": [
         "logs:CreateLogGroup",
