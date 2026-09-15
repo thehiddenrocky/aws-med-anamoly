@@ -1,10 +1,10 @@
 {
-  "provider": "PRV53033",
-  "total_claims": 2,
-  "unique_patients": 1,
-  "avg_length_of_stay": 2.5,
-  "avg_daily_reimbursement": 18250.0,
-  "max_daily_reimbursement": 36500.0,
-  "claims_per_patient_ratio": 2.0,
-  "high_daily_claims_ratio": 1.0
+"provider": "PRV52627",
+"total_claims": 80,
+"unique_patients": 10,
+"avg_length_of_stay": 5.2,
+"avg_daily_reimbursement": 8500.0,
+"max_daily_reimbursement": 15000.0,
+"claims_per_patient_ratio": 8.0,
+"high_daily_claims_ratio": 0.45
 }
