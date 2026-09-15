@@ -272,16 +272,18 @@ MODEL = None
 SCALER = None
 
 # S3 Configuration
-BUCKET_NAME = os.environ.get('BUCKET_NAME', 'medicare-fraud-analytics-023413058557')
-MODEL_KEY = os.environ.get('MODEL_KEY', 'models/model.joblib')
-SCALER_KEY = os.environ.get('SCALER_KEY', 'models/scaler.joblib')
+BUCKET_NAME = os.environ.get('BUCKET_NAME', 'medicare-fraud-analytics-023413058557').strip()
+MODEL_KEY = os.environ.get('MODEL_KEY', 'models/model.joblib').strip()
+SCALER_KEY = os.environ.get('SCALER_KEY', 'models/scaler.joblib').strip()
+S3_REGION = os.environ.get('S3_REGION', os.environ.get('AWS_REGION', 'us-east-1')).strip()
 
 # DynamoDB Configuration
-DYNAMODB_TABLE = os.environ.get('DYNAMODB_TABLE', 'medicare_provider_scores')
+DYNAMODB_TABLE = os.environ.get('DYNAMODB_TABLE', 'medicare_provider_scores').strip()
+DYNAMODB_REGION = os.environ.get('DYNAMODB_REGION', os.environ.get('AWS_REGION', 'us-east-1')).strip()
 
 # Bedrock Configuration
-BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'us.anthropic.claude-haiku-4-5-20251001-v1:0')
-BEDROCK_REGION = os.environ.get('BEDROCK_REGION', 'us-east-1')
+BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'us.anthropic.claude-haiku-4-5-20251001-v1:0').strip()
+BEDROCK_REGION = os.environ.get('BEDROCK_REGION', 'us-east-1').strip()
 
 # Local Cache Paths
 LOCAL_MODEL_PATH = '/tmp/model.joblib'
@@ -304,7 +306,7 @@ def load_artifacts():
     and deserializes them into memory if not already cached.
     """
     global MODEL, SCALER
-    region = os.environ.get('AWS_REGION', 'us-east-1')
+    region = S3_REGION
     
     print("[ARTIFACTS] Checking machine learning artifacts in memory...")
     
@@ -347,7 +349,7 @@ def check_dynamodb_cache(provider_id):
         print("[CACHE] DynamoDB table name not configured. Skipping cache lookup.")
         return None
         
-    region = os.environ.get('AWS_REGION', 'us-east-1')
+    region = DYNAMODB_REGION
     host = f"dynamodb.{region}.amazonaws.com"
     endpoint = "/"
     action = "DynamoDB_20120810.GetItem"
@@ -432,7 +434,7 @@ def invoke_bedrock_analysis(provider_id, score, risk_level, metrics):
     print(f"[GENAI] Invoking Bedrock ({BEDROCK_MODEL_ID}) for provider: {provider_id} ...")
     try:
         response_str = aws_sigv4_request(
-            service="bedrock",
+            service="bedrock-runtime",
             region=region,
             host=host,
             endpoint=endpoint,
@@ -459,7 +461,7 @@ def save_to_dynamodb_cache(provider_id, score, is_anomaly, risk_level, genai_ana
     if not DYNAMODB_TABLE:
         return
         
-    region = os.environ.get('AWS_REGION', 'us-east-1')
+    region = DYNAMODB_REGION
     host = f"dynamodb.{region}.amazonaws.com"
     endpoint = "/"
     action = "DynamoDB_20120810.PutItem"
@@ -522,19 +524,29 @@ def lambda_handler(event, context):
     print(f"[HANDLER] Real-Time Scoring Invoked at {datetime.datetime.utcnow().isoformat()}Z")
     print(f"[HANDLER] Event keys: {list(event.keys())}")
     
-    # Handle preflight CORS request
-    if event.get('httpMethod') == 'OPTIONS':
-        print("[HANDLER] Preflight OPTIONS check. Returning success CORS headers.")
+    # Handle preflight CORS request (triggered by API Gateway)
+    # Detects both REST API ('httpMethod') and HTTP API v2 ('requestContext' -> 'http' -> 'method')
+    http_method = event.get('httpMethod')
+    if not http_method and 'requestContext' in event:
+        http_method = event['requestContext'].get('http', {}).get('method')
+        
+    if http_method == 'OPTIONS':
+        print("[HANDLER] Preflight OPTIONS check. Returning success with CORS headers.")
         return format_response(200, {"message": "Success"})
         
-    try:
-        # 1. Parse Input Body
-        body_str = event.get('body', '{}') or '{}'
-        print(f"[HANDLER] Incoming body size: {len(body_str)} characters.")
-        data = json.loads(body_str)
-    except Exception as e:
-        print(f"[HANDLER] ERROR parsing body payload JSON: {str(e)}")
-        return format_response(400, {"error": f"Invalid JSON payload: {str(e)}"})
+    # 1. Parse Event Body if called via API Gateway Proxy / HTTP API
+    if 'body' in event:
+        body_str = event.get('body')
+        if not body_str:
+            return format_response(400, {"error": "Empty body in request."})
+        try:
+            data = json.loads(body_str)
+        except Exception as e:
+            print(f"[HANDLER] ERROR: Failed to parse JSON body: {str(e)}")
+            return format_response(400, {"error": f"Invalid JSON payload: {str(e)}"})
+    else:
+        # Fall back to event as raw JSON if invoked directly (e.g. CLI direct invoke)
+        data = event
 
     # 2. Check for Batch or Single Request
     is_batch = isinstance(data, list)
@@ -569,9 +581,15 @@ def lambda_handler(event, context):
             })
             
         # Extract features in exact mathematical order
-        features = [float(record[f]) for f in REQUIRED_FEATURES]
-        processed_inputs.append(features)
-        print(f"[HANDLER] Record {i+1}/{len(records)} ({provider_id}) validated.")
+        try:
+            features = [float(record[f]) for f in REQUIRED_FEATURES]
+            processed_inputs.append(features)
+            print(f"[HANDLER] Record {i+1}/{len(records)} ({provider_id}) validated.")
+        except (ValueError, TypeError) as e:
+            print(f"[HANDLER] ERROR: Invalid data type for features of provider {provider_id}: {str(e)}")
+            return format_response(400, {
+                "error": f"Invalid data type for features of provider {provider_id}: {str(e)}"
+            })
 
     try:
         # 5. Lazy Load Models (runs on Cold Starts only)
@@ -647,3 +665,4 @@ def lambda_handler(event, context):
         print(f"[HANDLER] CRITICAL PREDICTION FAILURE: {str(e)}")
         print("=" * 80)
         return format_response(500, {"error": f"Inference pipeline execution error: {str(e)}"})
+
