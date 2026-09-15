@@ -65,7 +65,7 @@ if [[ $EXISTS == *"ResourceNotFoundException"* ]]; then
     --code S3Bucket=$BUCKET,S3Key=$ZIP_NAME \
     --timeout 30 \
     --memory-size 1024 \
-    --environment "Variables={BUCKET_NAME=$BUCKET,MODEL_KEY=models/model.joblib,SCALER_KEY=models/scaler.joblib,DYNAMODB_TABLE=medicare_provider_scores,BEDROCK_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0,BEDROCK_REGION=us-east-1}"
+    --environment "Variables={BUCKET_NAME=$BUCKET,MODEL_KEY=models/model.joblib,SCALER_KEY=models/scaler.joblib,DYNAMODB_TABLE=medicare_provider_scores,DYNAMODB_REGION=us-east-1,S3_REGION=us-east-1,BEDROCK_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0,BEDROCK_REGION=us-east-1}"
 else
   echo "--> Updating existing function code..."
   command aws lambda update-function-code \
@@ -78,7 +78,7 @@ else
     --function-name $FUNCTION_NAME \
     --timeout 30 \
     --memory-size 1024 \
-    --environment "Variables={BUCKET_NAME=$BUCKET,MODEL_KEY=models/model.joblib,SCALER_KEY=models/scaler.joblib,DYNAMODB_TABLE=medicare_provider_scores,BEDROCK_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0,BEDROCK_REGION=us-east-1}"
+    --environment "Variables={BUCKET_NAME=$BUCKET,MODEL_KEY=models/model.joblib,SCALER_KEY=models/scaler.joblib,DYNAMODB_TABLE=medicare_provider_scores,DYNAMODB_REGION=us-east-1,S3_REGION=us-east-1,BEDROCK_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0,BEDROCK_REGION=us-east-1}"
 fi
 
 echo "=== Deployment Completed Successfully! ==="
